@@ -12,7 +12,7 @@ import { setCurrentAgentId, setCurrentTeamId } from '../../store/slices/agentSli
 import { addMessage, clearCurrentSession, setCurrentSession, setStreaming, updateSessionStatus } from '../../store/slices/coworkSlice';
 import { clearSelection,selectAction, setActions } from '../../store/slices/quickActionSlice';
 import { clearActiveSkills, setActiveSkillIds } from '../../store/slices/skillSlice';
-import type { CoworkImageAttachment, CoworkSession, OpenClawEngineStatus } from '../../types/cowork';
+import type { CoworkImageAttachment, CoworkSession, ExternalAgentProviderAppType, OpenClawEngineStatus } from '../../types/cowork';
 import { getAgentDisplayName, getAgentSelectIcon } from '../../utils/defaultAgentDisplay';
 import Modal from '../common/Modal';
 import ComposeIcon from '../icons/ComposeIcon';
@@ -93,6 +93,31 @@ const shouldRequireWesightModelConfig = (engine?: CoworkAgentEngine): boolean =>
     engine || store.getState().cowork.config.agentEngine,
   )
 );
+
+const getCliAppTypeForEngine = (engine: CoworkAgentEngine): ExternalAgentProviderAppType | null => {
+  if (engine === CoworkAgentEngine.ClaudeCode) return 'claude';
+  if (engine === CoworkAgentEngine.Codex) return 'codex';
+  if (engine === CoworkAgentEngine.OpenClaw) return 'openclaw';
+  if (engine === CoworkAgentEngine.Hermes) return 'hermes';
+  if (engine === CoworkAgentEngine.OpenCode) return 'opencode';
+  if (engine === CoworkAgentEngine.GrokBuild) return 'grok';
+  if (engine === CoworkAgentEngine.QwenCode) return 'qwen';
+  if (engine === CoworkAgentEngine.DeepSeekTui) return 'deepseek_tui';
+  return null;
+};
+
+const getEngineLabelKey = (engine: CoworkAgentEngine): string => {
+  if (engine === CoworkAgentEngine.OpenClaw) return 'coworkAgentEngineOpenClaw';
+  if (engine === CoworkAgentEngine.Hermes) return 'coworkAgentEngineHermes';
+  if (engine === CoworkAgentEngine.ClaudeCode) return 'coworkAgentEngineClaudeCode';
+  if (engine === CoworkAgentEngine.Codex) return 'coworkAgentEngineCodex';
+  if (engine === CoworkAgentEngine.OpenCode) return 'coworkAgentEngineOpenCode';
+  if (engine === CoworkAgentEngine.GrokBuild) return 'coworkAgentEngineGrokBuild';
+  if (engine === CoworkAgentEngine.QwenCode) return 'coworkAgentEngineQwenCode';
+  if (engine === CoworkAgentEngine.DeepSeekTui) return 'coworkAgentEngineDeepSeekTui';
+  if (engine === CoworkAgentEngine.CodexApp) return 'coworkAgentEngineCodexApp';
+  return 'coworkAgentEngineClaudeLegacy';
+};
 
 const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSkills, onShowMcp, onShowAgents, isSidebarCollapsed, onToggleSidebar, onNewChat, updateBadge }) => {
   const dispatch = useDispatch();
@@ -217,6 +242,29 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
     }
   };
 
+  const ensureCliInstalledBeforeSend = async (): Promise<boolean> => {
+    const appType = getCliAppTypeForEngine(selectedRuntimeEngine);
+    if (!appType) return true;
+    try {
+      const snapshot = await coworkService.getAgentEngineSnapshot();
+      const status = snapshot?.engines.find((item) => item.appType === appType);
+      if (status?.found) {
+        return true;
+      }
+      const message = i18nService.t('coworkAgentEngineCliRequiredBeforeSend');
+      window.dispatchEvent(new CustomEvent('app:showToast', { detail: message }));
+      onRequestAppSettings?.({
+        initialTab: 'coworkAgentEngine',
+        noticeI18nKey: 'coworkAgentEngineCliRequiredBeforeSend',
+        noticeExtra: i18nService.t(getEngineLabelKey(selectedRuntimeEngine)),
+      });
+      return false;
+    } catch (error) {
+      console.error('[CoworkView] Failed to check selected agent CLI before send:', error);
+      return true;
+    }
+  };
+
   const handleRestartGateway = async () => {
     if (isRestartingGateway) return;
     setIsRestartingGateway(true);
@@ -304,6 +352,10 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
     };
 
     try {
+      if (!await ensureCliInstalledBeforeSend()) {
+        return false;
+      }
+
       if (!await ensureOpenClawReadyBeforeSend()) {
         return false;
       }
@@ -447,6 +499,10 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
 
     isContinuingRef.current = true;
     try {
+      if (!await ensureCliInstalledBeforeSend()) {
+        return false;
+      }
+
       if (!await ensureOpenClawReadyBeforeSend()) {
         return false;
       }

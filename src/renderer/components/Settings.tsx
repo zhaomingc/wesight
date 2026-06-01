@@ -51,6 +51,7 @@ import type {
 } from '../types/cowork';
 import AgentsView from './agent/AgentsView';
 import Modal from './common/Modal';
+import AgentEnvironmentSetup from './cowork/AgentEnvironmentSetup';
 import ErrorMessage from './ErrorMessage';
 import BrainIcon from './icons/BrainIcon';
 import ConnectorIcon from './icons/ConnectorIcon';
@@ -4310,6 +4311,12 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
       case 'coworkAgentEngine':
         return (
           <div className="space-y-6">
+            <AgentEnvironmentSetup
+              selectedEngine={coworkAgentEngine}
+              onEngineChange={(engine) => setCoworkAgentEngine(engine)}
+              onSnapshotChange={setAgentEnvironmentSnapshot}
+              compact
+            />
             {expandedCoworkAgentEngine !== coworkAgentEngine && renderCoworkAgentApplyProgress()}
             <div className="space-y-3">
               {COWORK_AGENT_ENGINE_OPTIONS.map(renderAgentEngineOption)}

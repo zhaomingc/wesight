@@ -4,6 +4,7 @@ import { useDispatch,useSelector } from 'react-redux';
 
 import AgentsView from './components/agent/AgentsView';
 import { CoworkView } from './components/cowork';
+import AgentSetupWizard from './components/cowork/AgentSetupWizard';
 import CoworkPermissionModal from './components/cowork/CoworkPermissionModal';
 import CoworkQuestionWizard from './components/cowork/CoworkQuestionWizard';
 import EngineStartupOverlay from './components/cowork/EngineStartupOverlay';
@@ -48,6 +49,7 @@ const App: React.FC = () => {
   const [downloadProgress, setDownloadProgress] = useState<AppUpdateDownloadProgress | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [privacyAgreed, setPrivacyAgreed] = useState<boolean | null>(null);
+  const [agentSetupCompleted, setAgentSetupCompleted] = useState<boolean | null>(null);
   const [enterpriseConfig, setEnterpriseConfig] = useState<{
     ui?: Record<string, 'hide' | 'disable' | 'readonly'>;
     disableUpdate?: boolean;
@@ -163,6 +165,8 @@ const App: React.FC = () => {
         // 检查隐私协议是否已同意（必须在 setIsInitialized 之前）
         const agreed = await window.electron.store.get('privacy_agreed');
         setPrivacyAgreed(agreed === true);
+        const setupCompleted = await window.electron.store.get('agent_setup_completed');
+        setAgentSetupCompleted(setupCompleted === true);
 
         setIsInitialized(true);
         console.info('[App] initializeApp: shell ready');
@@ -428,6 +432,11 @@ const App: React.FC = () => {
   const handlePrivacyAccept = useCallback(async () => {
     await window.electron.store.set('privacy_agreed', true);
     setPrivacyAgreed(true);
+  }, []);
+
+  const handleAgentSetupComplete = useCallback(async () => {
+    await window.electron.store.set('agent_setup_completed', true);
+    setAgentSetupCompleted(true);
   }, []);
 
   const handlePrivacyReject = useCallback(() => {
@@ -786,6 +795,9 @@ const App: React.FC = () => {
           onAccept={handlePrivacyAccept}
           onReject={handlePrivacyReject}
         />
+      )}
+      {privacyAgreed === true && agentSetupCompleted === false && (
+        <AgentSetupWizard onComplete={handleAgentSetupComplete} />
       )}
     </div>
   );
