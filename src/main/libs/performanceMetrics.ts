@@ -14,7 +14,12 @@ export type PerformanceTimingName =
   | 'selected_engine_ready_ms'
   | 'skills_ready_ms'
   | 'mcp_ready_ms'
-  | 'im_ready_ms';
+  | 'im_ready_ms'
+  | 'session_recovery_ms'
+  | 'runtime_call_recovery_ms'
+  | 't0_ready_ms'
+  | 't1_ready_ms'
+  | 't2_ready_ms';
 
 export type IpcMetricType =
   | 'message'

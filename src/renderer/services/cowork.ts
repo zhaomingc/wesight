@@ -43,6 +43,7 @@ import type {
   RuntimeCallRecord,
   RuntimeMetricsFilters,
   RuntimeMetricsSummary,
+  StartupServiceState,
 } from '../types/cowork';
 import { i18nService } from './i18n';
 
@@ -77,9 +78,14 @@ class CoworkService {
     this.setupOpenClawEngineListeners();
     this.setupHermesEngineListeners();
 
-    // Load managed engine status
-    await this.loadOpenClawEngineStatus();
-    await this.loadHermesEngineStatus();
+    // Managed engine status is not needed for first paint. Refresh it in the
+    // background so slow gateway checks cannot delay the initial shell.
+    void this.loadOpenClawEngineStatus().catch((error) => {
+      console.debug('[CoworkService] failed to load OpenClaw engine status:', error);
+    });
+    void this.loadHermesEngineStatus().catch((error) => {
+      console.debug('[CoworkService] failed to load Hermes engine status:', error);
+    });
 
     this.initialized = true;
   }
@@ -287,6 +293,15 @@ class CoworkService {
     void window.electron?.cowork?.reportRendererReady?.({
       configLoadedMs: Math.round(performance.now() - startedAt),
     })?.catch(() => {});
+  }
+
+  async getStartupServicesStatus(): Promise<StartupServiceState[]> {
+    const result = await window.electron?.cowork?.getStartupServicesStatus?.();
+    return result?.success && result.services ? result.services : [];
+  }
+
+  onStartupServicesChanged(callback: (services: StartupServiceState[]) => void): () => void {
+    return window.electron?.cowork?.onStartupServicesChanged?.(callback) ?? (() => {});
   }
 
   async loadOpenClawEngineStatus(): Promise<OpenClawEngineStatus | null> {

@@ -37,6 +37,17 @@ export type { CoworkAgentEngine, ExternalAgentConfigSource };
 export type { CoworkSessionKind };
 export type { ClaudeCodePermissionMode, DeepSeekTuiPermissionMode, OpenCodePermissionMode, QwenCodePermissionMode };
 
+export type StartupServiceStatus = 'pending' | 'running' | 'ready' | 'error' | 'degraded';
+
+export interface StartupServiceState {
+  name: string;
+  status: StartupServiceStatus;
+  startedAt?: number;
+  finishedAt?: number;
+  durationMs?: number;
+  error?: string;
+}
+
 // Cowork message metadata
 export interface CoworkMessageMetadata {
   toolName?: string;

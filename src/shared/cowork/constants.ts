@@ -265,6 +265,8 @@ export const CoworkIpcChannel = {
   StreamError: 'cowork:stream:error',
   StreamFileActivity: 'cowork:stream:fileActivity',
   PerformanceRendererReady: 'cowork:performance:rendererReady',
+  StartupServicesStatus: 'cowork:startupServices:status',
+  StartupServicesChanged: 'cowork:startupServices:changed',
   RuntimeMetricsSummary: 'cowork:runtimeMetrics:summary',
   RuntimeMetricsCalls: 'cowork:runtimeMetrics:calls',
   RuntimeMetricsDetail: 'cowork:runtimeMetrics:detail',

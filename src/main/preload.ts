@@ -351,6 +351,27 @@ contextBridge.exposeInMainWorld('electron', {
       recentSessionsLoadedMs?: number;
     }) =>
       ipcRenderer.invoke(CoworkIpcChannel.PerformanceRendererReady, input),
+    getStartupServicesStatus: () =>
+      ipcRenderer.invoke(CoworkIpcChannel.StartupServicesStatus),
+    onStartupServicesChanged: (callback: (services: Array<{
+      name: string;
+      status: 'pending' | 'running' | 'ready' | 'error' | 'degraded';
+      startedAt?: number;
+      finishedAt?: number;
+      durationMs?: number;
+      error?: string;
+    }>) => void) => {
+      const handler = (_event: IpcRendererEvent, services: Array<{
+        name: string;
+        status: 'pending' | 'running' | 'ready' | 'error' | 'degraded';
+        startedAt?: number;
+        finishedAt?: number;
+        durationMs?: number;
+        error?: string;
+      }>) => callback(services);
+      ipcRenderer.on(CoworkIpcChannel.StartupServicesChanged, handler);
+      return () => ipcRenderer.removeListener(CoworkIpcChannel.StartupServicesChanged, handler);
+    },
     ensureStudioAssets: () =>
       ipcRenderer.invoke(CoworkIpcChannel.StudioAssetsEnsure),
     installAgentCli: (appType: 'claude' | 'codex' | 'hermes' | 'openclaw' | 'opencode' | 'grok' | 'qwen' | 'deepseek_tui') =>

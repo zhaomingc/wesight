@@ -80,6 +80,17 @@ interface CoworkSessionSummary {
   updatedAt: number;
 }
 
+type StartupServiceStatus = 'pending' | 'running' | 'ready' | 'error' | 'degraded';
+
+interface StartupServiceState {
+  name: string;
+  status: StartupServiceStatus;
+  startedAt?: number;
+  finishedAt?: number;
+  durationMs?: number;
+  error?: string;
+}
+
 interface CoworkConfig {
   workingDirectory: string;
   systemPrompt: string;
@@ -677,6 +688,8 @@ interface IElectronAPI {
       configLoadedMs?: number;
       recentSessionsLoadedMs?: number;
     }) => Promise<{ success: boolean }>;
+    getStartupServicesStatus: () => Promise<{ success: boolean; services?: StartupServiceState[]; error?: string }>;
+    onStartupServicesChanged: (callback: (services: StartupServiceState[]) => void) => () => void;
     ensureStudioAssets: () => Promise<CoworkStudioAssetsResult>;
     installAgentCli: (appType: ExternalAgentProviderAppType) => Promise<ExternalAgentCliInstallResult>;
     listAgentProviders: (appType: ExternalAgentProviderAppType) => Promise<ExternalAgentProviderListResult>;

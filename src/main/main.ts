@@ -5057,6 +5057,11 @@ if (!gotTheLock) {
     return { success: true };
   });
 
+  ipcMain.handle(CoworkIpcChannel.StartupServicesStatus, async () => ({
+    success: true,
+    services: getStartupServicesSnapshot(),
+  }));
+
   ipcMain.handle(CoworkIpcChannel.StudioAssetsEnsure, async () => {
     return ensureCoworkStudioAssets();
   });
@@ -7381,6 +7386,111 @@ if (!gotTheLock) {
   process.once('SIGINT', () => handleTerminationSignal('SIGINT'));
   process.once('SIGTERM', () => handleTerminationSignal('SIGTERM'));
 
+  type StartupServiceStatus = 'pending' | 'running' | 'ready' | 'error' | 'degraded';
+  type StartupServiceName =
+    | 'session_recovery'
+    | 'runtime_call_recovery'
+    | 'token_proxy'
+    | 'enterprise_sync'
+    | 'runtime_forwarders'
+    | 'openclaw_config_sync'
+    | 'hermes_config_sync'
+    | 'selected_engine'
+    | 'scheduled_tasks'
+    | 'skills'
+    | 'python_runtime'
+    | 'skill_services'
+    | 'app_config'
+    | 'openai_compat_proxy'
+    | 'im_gateways';
+
+  type StartupServiceState = {
+    name: StartupServiceName;
+    status: StartupServiceStatus;
+    startedAt?: number;
+    finishedAt?: number;
+    durationMs?: number;
+    error?: string;
+  };
+
+  const startupServiceStates = new Map<StartupServiceName, StartupServiceState>();
+  const startupServiceNames: StartupServiceName[] = [
+    'session_recovery',
+    'runtime_call_recovery',
+    'token_proxy',
+    'enterprise_sync',
+    'runtime_forwarders',
+    'openclaw_config_sync',
+    'hermes_config_sync',
+    'selected_engine',
+    'scheduled_tasks',
+    'skills',
+    'python_runtime',
+    'skill_services',
+    'app_config',
+    'openai_compat_proxy',
+    'im_gateways',
+  ];
+
+  for (const name of startupServiceNames) {
+    startupServiceStates.set(name, { name, status: 'pending' });
+  }
+
+  const getStartupServicesSnapshot = (): StartupServiceState[] =>
+    startupServiceNames.map(name => startupServiceStates.get(name) ?? { name, status: 'pending' });
+
+  const broadcastStartupServicesStatus = (): void => {
+    const snapshot = getStartupServicesSnapshot();
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed()) continue;
+      win.webContents.send(CoworkIpcChannel.StartupServicesChanged, snapshot);
+    }
+  };
+
+  const setStartupServiceStatus = (
+    name: StartupServiceName,
+    status: StartupServiceStatus,
+    input: { startedAt?: number; error?: string } = {},
+  ): void => {
+    const existing = startupServiceStates.get(name) ?? { name, status: 'pending' };
+    const finishedAt = status === 'ready' || status === 'error' || status === 'degraded'
+      ? Date.now()
+      : existing.finishedAt;
+    const startedAt = input.startedAt ?? existing.startedAt ?? (status === 'running' ? Date.now() : undefined);
+    startupServiceStates.set(name, {
+      ...existing,
+      status,
+      startedAt,
+      finishedAt,
+      durationMs: startedAt && finishedAt ? finishedAt - startedAt : existing.durationMs,
+      error: input.error,
+    });
+    broadcastStartupServicesStatus();
+  };
+
+  const runStartupService = async (
+    name: StartupServiceName,
+    task: () => Promise<void> | void,
+    options: { degradedOnError?: boolean } = {},
+  ): Promise<void> => {
+    const startedAt = Date.now();
+    setStartupServiceStatus(name, 'running', { startedAt });
+    try {
+      await task();
+      setStartupServiceStatus(name, 'ready', { startedAt });
+    } catch (error) {
+      setStartupServiceStatus(name, options.degradedOnError ? 'degraded' : 'error', {
+        startedAt,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      if (options.degradedOnError) {
+        console.warn(`[Startup] service ${name} degraded during background startup:`, error);
+        return;
+      }
+      console.error(`[Startup] service ${name} failed during background startup:`, error);
+    }
+  };
+
   // 初始化应用
   const initApp = async () => {
     console.log('[Main] initApp: waiting for app.whenReady()');
@@ -7410,18 +7520,52 @@ if (!gotTheLock) {
     store = await initStore();
     console.log('[Main] initApp: store initialized');
     refreshEndpointsTestMode(store);
+    setContentSecurityPolicy();
+    bindCoworkRuntimeForwarder();
+    bindOpenClawStatusForwarder();
+
+    console.log('[Main] initApp: creating window');
+    createWindow();
+    markTiming('t0_ready_ms');
+    console.log('[Main] initApp: window created');
+    applyDesktopPetConfigFromStore();
+
+    // Windows/Linux cold start: parse deep link from process.argv
+    // Always buffer since renderer is not ready yet after createWindow().
+    const coldStartDeepLink = process.argv.find(arg => arg.startsWith('wesight://'));
+    if (coldStartDeepLink) {
+      try {
+        const parsed = new URL(coldStartDeepLink);
+        if (parsed.hostname === 'auth' && parsed.pathname === '/callback') {
+          const code = parsed.searchParams.get('code');
+          if (code) {
+            pendingAuthCode = code;
+          }
+        }
+      } catch (e) {
+        console.error('[Main] Failed to parse cold-start deep link:', e);
+      }
+    }
 
     // Defensive recovery: app may be force-closed during execution and leave
-    // stale running flags in DB. Normalize them on startup.
-    const resetCount = getCoworkStore().resetRunningSessions();
-    console.log('[Main] initApp: resetRunningSessions done, count:', resetCount);
-    if (resetCount > 0) {
-      console.log(`[Main] Reset ${resetCount} stuck cowork session(s) from running -> idle`);
-    }
-    const resetRuntimeCallCount = getRuntimeTelemetryStore().resetRunningCalls();
-    if (resetRuntimeCallCount > 0) {
-      console.log(`[Main] Reset ${resetRuntimeCallCount} stale runtime call(s) from running -> stopped`);
-    }
+    // stale running flags in DB. Normalize them after the shell is created.
+    await runStartupService('session_recovery', () => {
+      const recoveryStartedAt = nowMs();
+      const resetCount = getCoworkStore().resetRunningSessions();
+      markTiming('session_recovery_ms', recoveryStartedAt);
+      console.log('[Main] initApp: resetRunningSessions done, count:', resetCount);
+      if (resetCount > 0) {
+        console.log(`[Main] Reset ${resetCount} stuck cowork session(s) from running -> idle`);
+      }
+    }, { degradedOnError: true });
+    await runStartupService('runtime_call_recovery', () => {
+      const recoveryStartedAt = nowMs();
+      const resetRuntimeCallCount = getRuntimeTelemetryStore().resetRunningCalls();
+      markTiming('runtime_call_recovery_ms', recoveryStartedAt);
+      if (resetRuntimeCallCount > 0) {
+        console.log(`[Main] Reset ${resetRuntimeCallCount} stale runtime call(s) from running -> stopped`);
+      }
+    }, { degradedOnError: true });
     // Inject store getter into claudeSettings
     setStoreGetter(() => store);
     // Inject auth getters for wesight-server provider routing
@@ -7534,24 +7678,26 @@ if (!gotTheLock) {
       }
     });
 
+    markTiming('t1_ready_ms');
+
+    void (async () => {
+
     // Start the lightweight token proxy before OpenClaw config sync so that
     // wesight-server provider can use the proxy URL in its config.
-    try {
+    await runStartupService('token_proxy', async () => {
       await startOpenClawTokenProxy({
         getAuthTokens,
         refreshToken: refreshOnce,
         getServerBaseUrl: getServerApiBaseUrl,
       });
       console.log('[Main] OpenClaw token proxy started');
-    } catch (err) {
-      console.warn('[Main] OpenClaw token proxy failed to start (non-fatal):', err);
-    }
+    }, { degradedOnError: true });
 
     // Enterprise config sync — must run before openclawConfigSync
     // so enterprise data is in SQLite when the config is generated.
-    const enterpriseConfigPath = resolveEnterpriseConfigPath();
-    if (enterpriseConfigPath) {
-      try {
+    await runStartupService('enterprise_sync', () => {
+      const enterpriseConfigPath = resolveEnterpriseConfigPath();
+      if (enterpriseConfigPath) {
         const imStoreInstance = getIMGatewayManager().getIMStore();
         const mcpStoreInstance = getMcpStore();
         syncEnterpriseConfig(
@@ -7595,122 +7741,107 @@ if (!gotTheLock) {
             return cs.getConfig().workingDirectory;
           },
         );
-      } catch (error) {
-        console.error('[Enterprise] config sync failed:', error);
-      }
-    } else {
-      // No enterprise config package found — clear any previously stored config
-      // so the app exits enterprise mode after the package is removed.
-      const hadEnterprise = store.get('enterprise_config');
-      if (hadEnterprise) {
-        store.delete('enterprise_config');
-        // Reset executionMode to default so sandbox mode reverts to "off".
-        const cs = getCoworkStore();
-        cs.setConfig({ executionMode: 'local' });
-        console.log('[Enterprise] config package removed, cleared enterprise mode and reset executionMode');
-      }
-    }
-
-    bindCoworkRuntimeForwarder();
-    bindOpenClawStatusForwarder();
-
-    const startupSync = await syncOpenClawConfig({
-      reason: 'startup',
-      restartGatewayIfRunning: false,
-    });
-    if (!startupSync.success) {
-      console.error('[OpenClaw] Startup config sync failed:', startupSync.error);
-    }
-    const hermesStartupSync = getHermesConfigSync().sync('startup');
-    if (!hermesStartupSync.success) {
-      console.error('[Hermes] Startup config sync failed:', hermesStartupSync.error);
-    }
-    const selectedEngineDetectStartedAt = nowMs();
-    const selectedEngine = resolveCoworkAgentEngine();
-    markTiming('selected_engine_detect_ms', selectedEngineDetectStartedAt);
-    if (isOpenClawCoworkAgentEngine(selectedEngine)) {
-      void ensureOpenClawRunningForCowork().then(() => {
-        markTiming('selected_engine_ready_ms', selectedEngineDetectStartedAt);
-        // Start cron polling once the gateway is confirmed running.
-        try {
-          getCronJobService().startPolling();
-        } catch (err) {
-          console.warn('[Main] CronJobService not available after OpenClaw startup:', err);
+      } else {
+        // No enterprise config package found — clear any previously stored config
+        // so the app exits enterprise mode after the package is removed.
+        const hadEnterprise = store.get('enterprise_config');
+        if (hadEnterprise) {
+          store.delete('enterprise_config');
+          // Reset executionMode to default so sandbox mode reverts to "off".
+          const cs = getCoworkStore();
+          cs.setConfig({ executionMode: 'local' });
+          console.log('[Enterprise] config package removed, cleared enterprise mode and reset executionMode');
         }
-      }).catch((error) => {
-        console.error('[OpenClaw] Failed to auto-start gateway on app startup:', error);
+      }
+    }, { degradedOnError: true });
+
+    await runStartupService('runtime_forwarders', () => {
+      bindCoworkRuntimeForwarder();
+      bindOpenClawStatusForwarder();
+    }, { degradedOnError: true });
+
+    await runStartupService('openclaw_config_sync', async () => {
+      const startupSync = await syncOpenClawConfig({
+        reason: 'startup',
+        restartGatewayIfRunning: false,
       });
-    } else {
+      if (!startupSync.success) {
+        throw new Error(startupSync.error || 'OpenClaw config sync failed.');
+      }
+    }, { degradedOnError: true });
+    await runStartupService('hermes_config_sync', () => {
+      const hermesStartupSync = getHermesConfigSync().sync('startup');
+      if (!hermesStartupSync.success) {
+        throw new Error(hermesStartupSync.error || 'Hermes config sync failed.');
+      }
+    }, { degradedOnError: true });
+    await runStartupService('selected_engine', async () => {
+      const selectedEngineDetectStartedAt = nowMs();
+      const selectedEngine = resolveCoworkAgentEngine();
+      markTiming('selected_engine_detect_ms', selectedEngineDetectStartedAt);
+      if (isOpenClawCoworkAgentEngine(selectedEngine)) {
+        await ensureOpenClawRunningForCowork();
+      }
       markTiming('selected_engine_ready_ms', selectedEngineDetectStartedAt);
-    }
+    }, { degradedOnError: true });
+
+    await runStartupService('scheduled_tasks', () => {
+      getCronJobService().startPolling();
+    }, { degradedOnError: true });
 
     console.log('[Main] initApp: setStoreGetter done');
     const skillsStartedAt = nowMs();
-    const manager = getSkillManager();
-    console.log('[Main] initApp: getSkillManager done');
+    await runStartupService('skills', () => {
+      const manager = getSkillManager();
+      console.log('[Main] initApp: getSkillManager done');
 
-    // When skills change (install/enable/disable/delete), re-sync AGENTS.md
-    // so OpenClaw's IM channel agents pick up the latest skill list.
-    manager.onSkillsChanged(() => {
-      syncOpenClawConfig({ reason: 'skills-changed' }).catch((error) => {
-        console.warn('[Main] Failed to sync OpenClaw config after skills change:', error);
+      // When skills change (install/enable/disable/delete), re-sync AGENTS.md
+      // so OpenClaw's IM channel agents pick up the latest skill list.
+      manager.onSkillsChanged(() => {
+        syncOpenClawConfig({ reason: 'skills-changed' }).catch((error) => {
+          console.warn('[Main] Failed to sync OpenClaw config after skills change:', error);
+        });
       });
-    });
 
-    // Non-critical: sync bundled skills to user data.
-    // Wrapped in try-catch so a failure here does not block window creation.
-    try {
+      // Non-critical: sync bundled skills to user data.
       manager.syncBundledSkillsToUserData();
       console.log('[Main] initApp: syncBundledSkillsToUserData done');
-    } catch (error) {
-      console.error('[Main] initApp: syncBundledSkillsToUserData failed:', error);
-    }
 
-    try {
       manager.recoverInterruptedUpgrades();
       console.log('[Main] initApp: recoverInterruptedUpgrades done');
-    } catch (error) {
-      console.error('[Main] initApp: recoverInterruptedUpgrades failed:', error);
-    }
 
-    try {
-      const runtimeResult = await ensurePythonRuntimeReady();
-      if (!runtimeResult.success) {
-        console.error('[Main] initApp: ensurePythonRuntimeReady failed:', runtimeResult.error);
-      } else {
-        console.log('[Main] initApp: ensurePythonRuntimeReady done');
-      }
-    } catch (error) {
-      console.error('[Main] initApp: ensurePythonRuntimeReady threw:', error);
-    }
-
-    try {
       manager.startWatching();
       console.log('[Main] initApp: startWatching done');
-    } catch (error) {
-      console.error('[Main] initApp: startWatching failed:', error);
-    }
+    }, { degradedOnError: true });
+
+    await runStartupService('python_runtime', async () => {
+      const runtimeResult = await ensurePythonRuntimeReady();
+      if (!runtimeResult.success) {
+        throw new Error(runtimeResult.error || 'Python runtime preparation failed.');
+      }
+      console.log('[Main] initApp: ensurePythonRuntimeReady done');
+    }, { degradedOnError: true });
 
     // Start skill services (non-critical)
-    try {
+    await runStartupService('skill_services', async () => {
       const skillServices = getSkillServiceManager();
       console.log('[Main] initApp: getSkillServiceManager done');
       await skillServices.startAll();
       console.log('[Main] initApp: skill services started');
-    } catch (error) {
-      console.error('[Main] initApp: skill services failed:', error);
-    } finally {
+    }, { degradedOnError: true }).finally(() => {
       markTiming('skills_ready_ms', skillsStartedAt);
-    }
-
-    const configLoadStartedAt = nowMs();
-    const appConfig = getStore().get<AppConfigSettings>('app_config');
-    markTiming('config_loaded_ms', configLoadStartedAt);
-    await applyProxyPreference(getUseSystemProxyFromConfig(appConfig));
-
-    await startCoworkOpenAICompatProxy().catch((error) => {
-      console.error('Failed to start OpenAI compatibility proxy:', error);
     });
+
+    await runStartupService('app_config', async () => {
+      const configLoadStartedAt = nowMs();
+      const appConfig = getStore().get<AppConfigSettings>('app_config');
+      markTiming('config_loaded_ms', configLoadStartedAt);
+      await applyProxyPreference(getUseSystemProxyFromConfig(appConfig));
+    }, { degradedOnError: true });
+
+    await runStartupService('openai_compat_proxy', async () => {
+      await startCoworkOpenAICompatProxy();
+    }, { degradedOnError: true });
 
     // Re-sync OpenClaw config after proxy is ready so that providers that route
     // through the proxy (e.g. github-copilot) get the correct baseUrl.
@@ -7723,46 +7854,20 @@ if (!gotTheLock) {
       }
     }
 
-    // 设置安全策略
-    setContentSecurityPolicy();
-
-    // 创建窗口
-    console.log('[Main] initApp: creating window');
-    createWindow();
-    console.log('[Main] initApp: window created');
-    applyDesktopPetConfigFromStore();
-
-    // Windows/Linux cold start: parse deep link from process.argv
-    // Always buffer since renderer is not ready yet after createWindow()
-    const coldStartDeepLink = process.argv.find(arg => arg.startsWith('wesight://'));
-    if (coldStartDeepLink) {
-      try {
-        const parsed = new URL(coldStartDeepLink);
-        if (parsed.hostname === 'auth' && parsed.pathname === '/callback') {
-          const code = parsed.searchParams.get('code');
-          if (code) {
-            pendingAuthCode = code;
-          }
-        }
-      } catch (e) {
-        console.error('[Main] Failed to parse cold-start deep link:', e);
+    // Auto-reconnect IM bots that were enabled before restart.
+    await runStartupService('im_gateways', async () => {
+      const imStartedAt = nowMs();
+      await getIMGatewayManager().startAllEnabled();
+      markTiming('im_ready_ms', imStartedAt);
+      if (resolveFeishuIMAgentEngine() === CoworkAgentEngineValue.Hermes) {
+        startHermesIMSessionSyncPolling();
+        void syncHermesIMSessionsToCowork('startup');
       }
-    }
-
-    // Auto-reconnect IM bots that were enabled before restart
-    const imStartedAt = nowMs();
-    getIMGatewayManager().startAllEnabled()
-      .then(() => {
-        markTiming('im_ready_ms', imStartedAt);
-        if (resolveFeishuIMAgentEngine() === CoworkAgentEngineValue.Hermes) {
-          startHermesIMSessionSyncPolling();
-          void syncHermesIMSessionsToCowork('startup');
-        }
-      })
-      .catch((error) => {
-        markTiming('im_ready_ms', imStartedAt);
-        console.error('[IM] Failed to auto-start enabled gateways:', error);
-      });
+    }, { degradedOnError: true });
+    markTiming('t2_ready_ms');
+    })().catch((error) => {
+      console.error('[Startup] background services failed:', error);
+    });
 
     // Reconnect OpenClaw gateway WS after system wake from sleep/suspend
     powerMonitor.on('resume', () => {
