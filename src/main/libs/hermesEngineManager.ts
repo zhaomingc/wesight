@@ -75,12 +75,26 @@ const findPath = (candidates: string[]): string | null => {
   return null;
 };
 
-const buildHermesSearchPath = (): string => [
-  path.join(os.homedir(), '.local', 'bin'),
-  '/opt/homebrew/bin',
-  '/usr/local/bin',
-  process.env.PATH ?? '',
-].join(path.delimiter);
+const buildHermesSearchPath = (): string => {
+  const paths = [
+    path.join(os.homedir(), '.local', 'bin'),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+  ];
+
+  if (process.platform === 'win32') {
+    const appData = process.env.APPDATA || '';
+    const localAppData = process.env.LOCALAPPDATA || '';
+    paths.push(
+      path.join(appData, 'npm'),
+      path.join(os.homedir(), '.hermes', 'bin'),
+      path.join(localAppData, 'hermes', 'hermes-agent', 'venv', 'Scripts'),
+    );
+  }
+
+  paths.push(process.env.PATH ?? '');
+  return paths.join(path.delimiter);
+};
 
 const progressPercentForInstallPhase = (phase: HermesInstallProgressPhase): number | undefined => {
   switch (phase) {
@@ -474,18 +488,37 @@ export class HermesEngineManager extends EventEmitter {
   }
 
   private resolveRuntimeMetadata(): RuntimeMetadata {
+    const home = os.homedir();
+    const appData = process.env.APPDATA || '';
+    const localAppData = process.env.LOCALAPPDATA || '';
+    const userName = path.basename(home);
     const candidates = [
       this.resolveCommandFromShell('hermes'),
-      path.join(os.homedir(), '.local', 'bin', 'hermes'),
+      path.join(home, '.local', 'bin', 'hermes'),
       '/opt/homebrew/bin/hermes',
       '/usr/local/bin/hermes',
+      ...(process.platform === 'win32' ? [
+        path.join(appData, 'npm', 'hermes.cmd'),
+        path.join(home, '.local', 'bin', 'hermes.exe'),
+        path.join(home, '.hermes', 'bin', 'hermes.exe'),
+        path.join(localAppData, 'hermes', 'hermes-agent', 'venv', 'Scripts', 'hermes.exe'),
+        'D:\\Program Files\\Hermes Studio\\resources\\python\\Scripts\\hermes.cmd',
+        'C:\\Program Files\\Hermes Studio\\resources\\python\\Scripts\\hermes.cmd',
+        `\\\\wsl$\\Ubuntu\\home\\${userName}\\.local\\bin\\hermes`,
+        `\\\\wsl$\\Ubuntu\\home\\${userName}\\.hermes\\bin\\hermes`,
+      ] : []),
     ].filter((value): value is string => Boolean(value));
     const commandPath = findPath(candidates);
     const expectedPathHint = [
       'PATH:hermes',
-      path.join(os.homedir(), '.local', 'bin', 'hermes'),
+      path.join(home, '.local', 'bin', 'hermes'),
       '/opt/homebrew/bin/hermes',
       '/usr/local/bin/hermes',
+      ...(process.platform === 'win32' ? [
+        path.join(appData, 'npm', 'hermes.cmd'),
+        path.join(home, '.hermes', 'bin', 'hermes.exe'),
+        path.join(localAppData, 'hermes', 'hermes-agent', 'venv', 'Scripts', 'hermes.exe'),
+      ] : []),
     ].join(', ');
 
     if (!commandPath) {

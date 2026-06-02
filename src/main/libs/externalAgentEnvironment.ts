@@ -320,7 +320,73 @@ const quoteForShell = (value: string): string => {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 };
 
+const getWindowsSearchPaths = (command: string): string[] => {
+  const home = homeDir();
+  const appData = process.env.APPDATA || '';
+  const localAppData = process.env.LOCALAPPDATA || '';
+  const userName = path.basename(home);
+
+  if (command === 'hermes') {
+    return [
+      path.join(appData, 'npm', 'hermes.cmd'),
+      path.join(appData, 'npm', 'hermes.exe'),
+      path.join(home, '.local', 'bin', 'hermes.exe'),
+      path.join(home, '.hermes', 'bin', 'hermes.exe'),
+      path.join(localAppData, 'hermes', 'hermes-agent', 'venv', 'Scripts', 'hermes.exe'),
+      `\\\\wsl$\\Ubuntu\\home\\${userName}\\.local\\bin\\hermes`,
+      `\\\\wsl$\\Ubuntu\\home\\${userName}\\.hermes\\bin\\hermes`,
+      'D:\\Program Files\\Hermes Studio\\resources\\python\\Scripts\\hermes.cmd',
+      'C:\\Program Files\\Hermes Studio\\resources\\python\\Scripts\\hermes.cmd',
+    ];
+  }
+  if (command === 'claude') {
+    return [
+      path.join(appData, 'npm', 'claude.cmd'),
+      path.join(home, '.local', 'bin', 'claude.exe'),
+    ];
+  }
+  if (command === 'codex') {
+    return [
+      path.join(appData, 'npm', 'codex.cmd'),
+    ];
+  }
+  if (command === 'openclaw') {
+    return [
+      path.join(appData, 'npm', 'openclaw.cmd'),
+      'C:\\Program Files (x86)\\ClawX\\resources\\cli\\openclaw',
+      'C:\\Program Files\\ClawX\\resources\\cli\\openclaw',
+      path.join(localAppData, 'Programs', 'ClawX', 'resources', 'cli', 'openclaw'),
+      path.join(home, '.openclaw', 'bin', 'openclaw'),
+    ];
+  }
+  if (command === 'opencode') {
+    return [
+      path.join(appData, 'npm', 'opencode.cmd'),
+    ];
+  }
+  if (command === 'qwen') {
+    return [
+      path.join(appData, 'npm', 'qwen.cmd'),
+    ];
+  }
+  if (command === 'deepseek-tui') {
+    return [
+      path.join(appData, 'npm', 'deepseek-tui.cmd'),
+    ];
+  }
+
+  return [];
+};
+
 const resolveCommand = (command: string): { found: boolean; path: string | null; error: string | null } => {
+  if (process.platform === 'win32') {
+    for (const candidate of getWindowsSearchPaths(command)) {
+      if (candidate && fs.existsSync(candidate)) {
+        return { found: true, path: candidate, error: null };
+      }
+    }
+  }
+
   const result = spawnSync(process.platform === 'win32' ? 'where' : 'which', [command], {
     encoding: 'utf8',
     shell: false,
