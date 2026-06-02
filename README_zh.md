@@ -106,6 +106,7 @@ WeSight 是一个开源桌面 AI Agent 控制台。它可以安装或复用 Clau
 | 赞助商 | 介绍 |
 | ------ | ---- |
 | <a href="https://pptoken.cc/"><img src="public/readme/sponsors/pptoken.png" alt="PPToken" width="240"></a> | 项目赞助。PPToken 提供 ChatGPT、Claude、Gemini 等主流 AI 模型 API 中转与密钥分发服务，支持低延迟、高可用、按量计费与订阅套餐灵活选择。 |
+| <a href="https://ciyuan.today/"><img src="public/readme/sponsors/ciyuan-api.jpg" alt="词元 API" width="240"></a> | 项目赞助。词元 API 致力于成为开发者的一站式 AI 接口平台，提供稳定、低延迟、高可用的大模型 API 服务，让 AI 应用开发更简单。 |
 
 ## Agent 引擎
 

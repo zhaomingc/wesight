@@ -106,6 +106,7 @@ Terminal-native coding agents are powerful, while their setup, model routing, pe
 | Sponsor | Description |
 | ------- | ----------- |
 | <a href="https://pptoken.cc/"><img src="public/readme/sponsors/pptoken.png" alt="PPToken" width="240"></a> | Project sponsor. PPToken provides API relay and key distribution for ChatGPT, Claude, Gemini and other mainstream AI models, with low latency, high availability, pay-as-you-go billing, and flexible subscription plans. |
+| <a href="https://ciyuan.today/"><img src="public/readme/sponsors/ciyuan-api.jpg" alt="Ciyuan API" width="240"></a> | Project sponsor. Ciyuan API aims to become a one-stop AI interface platform for developers, providing stable, low-latency, and highly available large model API services to make AI application development simpler. |
 
 ## Agent Engines
 
