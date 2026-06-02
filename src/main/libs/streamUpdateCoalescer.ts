@@ -66,6 +66,27 @@ export class StreamUpdateCoalescer {
     }
   }
 
+  clearSession(sessionId: string): void {
+    for (const key of Array.from(this.pending.keys())) {
+      if (!key.startsWith(`${sessionId}:`)) continue;
+      const pending = this.pending.get(key);
+      if (pending?.timer) {
+        clearTimeout(pending.timer);
+      }
+      this.pending.delete(key);
+    }
+    for (const key of Array.from(this.lastSentContent.keys())) {
+      if (key.startsWith(`${sessionId}:`)) {
+        this.lastSentContent.delete(key);
+      }
+    }
+    for (const key of Array.from(this.nextSequences.keys())) {
+      if (key.startsWith(`${sessionId}:`)) {
+        this.nextSequences.delete(key);
+      }
+    }
+  }
+
   flushAll(mode: MessageUpdateMode = 'snapshot'): void {
     for (const key of Array.from(this.pending.keys())) {
       this.flushKey(key, mode);

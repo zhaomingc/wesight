@@ -1995,6 +1995,7 @@ const bindCoworkRuntimeForwarder = (): void => {
 
   runtime.on('complete', (sessionId: string, claudeSessionId: string | null) => {
     messageUpdateCoalescer.flushSession(sessionId, 'final');
+    messageUpdateCoalescer.clearSession(sessionId);
     getCoworkFileActivityTracker().stopSession(sessionId, 1200);
     updateDesktopPetTaskSnapshot(sessionId, DesktopPetTaskStatus.Completed);
     const payload = { sessionId, claudeSessionId };
@@ -2016,6 +2017,7 @@ const bindCoworkRuntimeForwarder = (): void => {
 
   runtime.on('error', (sessionId: string, error: string) => {
     messageUpdateCoalescer.flushSession(sessionId, 'final');
+    messageUpdateCoalescer.clearSession(sessionId);
     getCoworkFileActivityTracker().stopSession(sessionId, 1200);
     updateDesktopPetTaskSnapshot(sessionId, DesktopPetTaskStatus.Error);
     // Mark session as error in store so the .catch() fallback can detect duplicates.
@@ -2026,6 +2028,7 @@ const bindCoworkRuntimeForwarder = (): void => {
 
   runtime.on('sessionStopped', (sessionId: string) => {
     messageUpdateCoalescer.flushSession(sessionId, 'final');
+    messageUpdateCoalescer.clearSession(sessionId);
     getCoworkFileActivityTracker().stopSession(sessionId);
     updateDesktopPetTaskSnapshot(sessionId, DesktopPetTaskStatus.Stopped);
   });

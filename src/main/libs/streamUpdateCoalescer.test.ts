@@ -75,6 +75,32 @@ test('sends appended content as delta after an initial snapshot', () => {
   });
 });
 
+test('clears pending timers and historical stream state for a session', () => {
+  vi.useFakeTimers();
+  const sent: MessageUpdatePayload[] = [];
+  const coalescer = new StreamUpdateCoalescer({
+    flushIntervalMs: 500,
+    send: payload => sent.push(payload),
+  });
+
+  coalescer.append('session-1', 'message-1', 'hello');
+  coalescer.flushAll();
+  coalescer.append('session-1', 'message-1', 'hello world');
+  coalescer.clearSession('session-1');
+  vi.advanceTimersByTime(500);
+  coalescer.append('session-1', 'message-1', 'fresh');
+  coalescer.flushAll();
+
+  expect(sent).toHaveLength(2);
+  expect(sent[1]).toMatchObject({
+    content: 'fresh',
+    mode: 'snapshot',
+    offset: 0,
+    sequence: 0,
+  });
+  vi.useRealTimers();
+});
+
 test('splits oversized payloads under the configured byte cap', () => {
   const sent: MessageUpdatePayload[] = [];
   const coalescer = new StreamUpdateCoalescer({
