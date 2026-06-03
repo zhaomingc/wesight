@@ -27,9 +27,11 @@ afterEach(() => {
 
 test('probes CLI commands asynchronously and isolates version timeouts', async () => {
   writeExecutable('claude', '#!/bin/sh\necho "claude-test 1.0.0"\n');
-  writeExecutable('grok', '#!/bin/sh\nif [ "$1" = "--version" ]; then sleep 3; fi\n');
+  writeExecutable('grok', '#!/bin/sh\nif [ "$1" = "--version" ]; then sleep 2; fi\n');
 
-  const { snapshot, report } = await getExternalAgentEnvironmentSnapshot();
+  const { snapshot, report } = await getExternalAgentEnvironmentSnapshot({
+    commandProbeTimeoutMs: 750,
+  });
   const claude = snapshot.engines.find(engine => engine.appType === 'claude');
   const grok = snapshot.engines.find(engine => engine.appType === 'grok');
   const grokMetric = report.metrics.find(metric => metric.command === 'grok');

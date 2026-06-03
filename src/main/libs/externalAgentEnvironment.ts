@@ -84,6 +84,10 @@ export interface ExternalAgentEnvironmentSnapshotResult {
   report: ExternalAgentEnvironmentProbeReport;
 }
 
+export interface ExternalAgentEnvironmentProbeOptions {
+  commandProbeTimeoutMs?: number;
+}
+
 type CcSwitchSettings = {
   claude_config_dir?: unknown;
   codex_config_dir?: unknown;
@@ -505,7 +509,10 @@ const buildWindowsCommandShimArgs = (commandPath: string, args: string[]): strin
   return ['/d', '/s', '/c', `call "${commandPath}" ${args.map((arg) => `"${arg.replace(/"/g, '\\"')}"`).join(' ')}`];
 };
 
-const resolveCommand = async (command: string): Promise<CommandResolution> => {
+const resolveCommand = async (
+  command: string,
+  options: ExternalAgentEnvironmentProbeOptions = {},
+): Promise<CommandResolution> => {
   if (process.platform === 'win32') {
     for (const candidate of getWindowsSearchPaths(command)) {
       if (candidate && fs.existsSync(candidate)) {
@@ -516,6 +523,7 @@ const resolveCommand = async (command: string): Promise<CommandResolution> => {
 
   const result = await runCommand(process.platform === 'win32' ? 'where' : 'which', [command], {
     env: buildProbeEnv(),
+    timeoutMs: options.commandProbeTimeoutMs,
   });
   if (result.status === 0) {
     const candidates = result.stdout.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
@@ -529,6 +537,7 @@ const resolveCommand = async (command: string): Promise<CommandResolution> => {
     const shellPath = process.env.SHELL || '/bin/zsh';
     const shellResult = await runCommand(shellPath, ['-lc', `command -v ${quoteForShell(command)}`], {
       env: buildProbeEnv(),
+      timeoutMs: options.commandProbeTimeoutMs,
     });
     if (shellResult.status === 0) {
       const commandPath = shellResult.stdout.split(/\r?\n/).map(line => line.trim()).find(Boolean) ?? null;
@@ -552,13 +561,17 @@ const resolveCommand = async (command: string): Promise<CommandResolution> => {
   };
 };
 
-const readCommandVersion = async (command: string): Promise<{ version: string | null; durationMs: number; timedOut: boolean }> => {
+const readCommandVersion = async (
+  command: string,
+  options: ExternalAgentEnvironmentProbeOptions = {},
+): Promise<{ version: string | null; durationMs: number; timedOut: boolean }> => {
   const startedAt = Date.now();
   const executable = isWindowsCommandShim(command) ? 'cmd.exe' : command;
   const args = isWindowsCommandShim(command)
     ? buildWindowsCommandShimArgs(command, ['--version'])
     : ['--version'];
   const result = await runCommand(executable, args, {
+    timeoutMs: options.commandProbeTimeoutMs,
     windowsVerbatimArguments: isWindowsCommandShim(command),
   });
   const durationMs = Date.now() - startedAt;
@@ -723,13 +736,14 @@ const buildCommandStatus = (
   command: string,
   settings: CcSwitchSettings,
   dbPath: string,
+  options: ExternalAgentEnvironmentProbeOptions = {},
 ): Promise<{ status: CliCommandStatus; metric: CliProbeMetric }> => (
   (async () => {
     const resolveStartedAt = Date.now();
-    const resolution = await resolveCommand(command);
+    const resolution = await resolveCommand(command, options);
     const resolveMs = Date.now() - resolveStartedAt;
     const versionResult = resolution.found
-      ? await readCommandVersion(resolution.path ?? command)
+      ? await readCommandVersion(resolution.path ?? command, options)
       : { version: null, durationMs: 0, timedOut: false };
     const config = buildCliConfigSnapshot(appType, settings, dbPath);
     return {
@@ -827,11 +841,13 @@ export function getPlaceholderExternalAgentEnvironmentSnapshot(): ExternalAgentE
   };
 }
 
-export async function getExternalAgentEnvironmentSnapshot(): Promise<ExternalAgentEnvironmentSnapshotResult> {
+export async function getExternalAgentEnvironmentSnapshot(
+  options: ExternalAgentEnvironmentProbeOptions = {},
+): Promise<ExternalAgentEnvironmentSnapshotResult> {
   const startedAt = Date.now();
   const { appDir, settingsPath, dbPath, settings } = readBaseSnapshotInputs();
   const results = await Promise.all(AGENT_ENGINE_COMMANDS.map(({ engine, appType, command }) => (
-    buildCommandStatus(engine, appType, command, settings, dbPath)
+    buildCommandStatus(engine, appType, command, settings, dbPath, options)
   )));
 
   return {
