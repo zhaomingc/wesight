@@ -187,22 +187,28 @@ export function resolveUserShellPath(): string | null {
  */
 let cachedWindowsRegistryPath: string | null | undefined;
 
-function readWindowsRegistryPathValue(registryKey: string): string {
+function queryWindowsRegistryValue(registryKey: string, valueName: string, timeout = 8000): string {
   try {
-    const output = execSync(`reg query "${registryKey}" /v Path`, {
+    const result = spawnSync('reg', ['query', registryKey, '/v', valueName], {
       encoding: 'utf-8',
-      timeout: 8000,
+      timeout,
+      stdio: ['ignore', 'pipe', 'ignore'],
       windowsHide: true,
     });
-
-    for (const line of output.split(/\r?\n/)) {
-      const match = line.match(/^\s*Path\s+REG_\w+\s+(.+)$/i);
-      if (match?.[1]) {
-        return match[1].trim();
-      }
-    }
+    return result.status === 0 && typeof result.stdout === 'string' ? result.stdout : '';
   } catch {
-    // Ignore missing keys or access-denied errors.
+    return '';
+  }
+}
+
+function readWindowsRegistryPathValue(registryKey: string): string {
+  const output = queryWindowsRegistryValue(registryKey, 'Path');
+
+  for (const line of output.split(/\r?\n/)) {
+    const match = line.match(/^\s*Path\s+REG_\w+\s+(.+)$/i);
+    if (match?.[1]) {
+      return match[1].trim();
+    }
   }
 
   return '';
@@ -331,17 +337,13 @@ function listGitInstallPathsFromRegistry(): string[] {
   const installRoots: string[] = [];
 
   for (const key of registryKeys) {
-    try {
-      const output = execSync(`reg query "${key}" /v InstallPath`, { encoding: 'utf-8', timeout: 5000 });
-      for (const line of output.split(/\r?\n/)) {
-        const match = line.match(/InstallPath\s+REG_\w+\s+(.+)$/i);
-        const root = normalizeWindowsPath(match?.[1]);
-        if (root) {
-          installRoots.push(root);
-        }
+    const output = queryWindowsRegistryValue(key, 'InstallPath', 5000);
+    for (const line of output.split(/\r?\n/)) {
+      const match = line.match(/InstallPath\s+REG_\w+\s+(.+)$/i);
+      const root = normalizeWindowsPath(match?.[1]);
+      if (root) {
+        installRoots.push(root);
       }
-    } catch {
-      // registry key might not exist
     }
   }
 
@@ -1347,6 +1349,7 @@ export function getSkillsRoot(): string {
 type EnhancedEnvOptions = {
   injectCoworkModelConfig?: boolean;
   apiConfigOverride?: ApiConfigOverride;
+  proxyProbeUrl?: string;
 };
 
 const COWORK_MODEL_ENV_KEYS = [
@@ -1400,7 +1403,7 @@ export async function getEnhancedEnv(
   }
 
   // Skip system proxy resolution if proxy env vars already exist
-  if (env.http_proxy || env.HTTP_PROXY || env.https_proxy || env.HTTPS_PROXY) {
+  if (env.http_proxy || env.HTTP_PROXY || env.https_proxy || env.HTTPS_PROXY || env.all_proxy || env.ALL_PROXY) {
     return env;
   }
 
@@ -1410,12 +1413,14 @@ export async function getEnhancedEnv(
   }
 
   // Resolve proxy from system settings
-  const proxyUrl = await resolveSystemProxyUrl('https://openrouter.ai');
+  const proxyUrl = await resolveSystemProxyUrl(options.proxyProbeUrl || 'https://openrouter.ai');
   if (proxyUrl) {
     env.http_proxy = proxyUrl;
     env.https_proxy = proxyUrl;
     env.HTTP_PROXY = proxyUrl;
     env.HTTPS_PROXY = proxyUrl;
+    env.all_proxy = proxyUrl;
+    env.ALL_PROXY = proxyUrl;
     console.log('Injected system proxy for subprocess:', proxyUrl);
   }
 
